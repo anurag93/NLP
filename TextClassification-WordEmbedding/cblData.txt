@@ -1,0 +1,906 @@
+       IDENTIFICATION DIVISION.
+      *
+       PROGRAM-ID.  CUSTMNT2.
+      *
+       ENVIRONMENT DIVISION.
+      *
+       DATA DIVISION.
+      *
+       WORKING-STORAGE SECTION.
+      *
+       01  SWITCHES.
+      *
+           05  VALID-DATA-SW                 PIC X(01) VALUE 'Y'.
+               88  VALID-DATA                          VALUE 'Y'.
+      *
+       01  FLAGS.
+      *
+           05  SEND-FLAG                     PIC X(01).
+               88  SEND-ERASE                       VALUE '1'.
+               88  SEND-ERASE-ALARM                 VALUE '2'.
+               88  SEND-DATAONLY                    VALUE '3'.
+               88  SEND-DATAONLY-ALARM              VALUE '4'.
+      *
+       01  WORK-FIELDS.
+      *
+           05  RESPONSE-CODE                 PIC S9(08) COMP.
+      *
+       01  USER-INSTRUCTIONS.
+      *
+           05  ADD-INSTRUCTION               PIC X(79) VALUE
+               'Type information for new customer.  Then Press Enter.'.
+           05  CHANGE-INSTRUCTION            PIC X(79) VALUE
+               'Type changes.  Then press Enter.'.
+           05  DELETE-INSTRUCTION            PIC X(79) VALUE
+               'Press Enter to delete this customer or press F12 to canc
+      -        'el.'.
+      *
+       01  COMMUNICATION-AREA.
+      *
+           05  CA-CONTEXT-FLAG               PIC X(01).
+               88  PROCESS-KEY-MAP                  VALUE '1'.
+               88  PROCESS-ADD-CUSTOMER             VALUE '2'.
+               88  PROCESS-CHANGE-CUSTOMER          VALUE '3'.
+               88  PROCESS-DELETE-CUSTOMER          VALUE '4'.
+           05  CA-CUSTOMER-RECORD.
+               10  CA-CUSTOMER-NUMBER        PIC X(06).
+               10  FILLER                    PIC X(112).
+      *
+       COPY CUSTMAS.
+      *
+       COPY MNTSET2.
+      *
+       COPY DFHAID.
+      *
+       COPY ATTR.
+      *
+       COPY ERRPARM.
+      *
+       LINKAGE SECTION.
+      *
+       01  DFHCOMMAREA                       PIC X(119).
+      *
+       PROCEDURE DIVISION.
+      *
+       0000-PROCESS-CUSTOMER-MAINT.
+      *
+           IF EIBCALEN > ZERO
+               MOVE DFHCOMMAREA TO COMMUNICATION-AREA
+           END-IF.
+      *
+           EVALUATE TRUE
+      *
+               WHEN EIBCALEN = ZERO
+                   MOVE LOW-VALUE TO MNTMAP1O
+                   MOVE -1 TO CUSTNO1L
+                   SET SEND-ERASE TO TRUE
+                   PERFORM 1500-SEND-KEY-MAP
+                   SET PROCESS-KEY-MAP TO TRUE
+      *
+               WHEN EIBAID = DFHPF3
+                   EXEC CICS
+                       XCTL PROGRAM('INVMENU')
+                   END-EXEC
+      *
+               WHEN EIBAID = DFHPF12
+                   IF PROCESS-KEY-MAP
+                       EXEC CICS
+                           XCTL PROGRAM('INVMENU')
+                       END-EXEC
+                   ELSE
+                       MOVE LOW-VALUE TO MNTMAP1O
+                       MOVE -1 TO CUSTNO1L
+                       SET SEND-ERASE TO TRUE
+                       PERFORM 1500-SEND-KEY-MAP
+                       SET PROCESS-KEY-MAP TO TRUE
+                   END-IF
+      *
+               WHEN EIBAID = DFHCLEAR
+                   IF PROCESS-KEY-MAP
+                       MOVE LOW-VALUE TO MNTMAP1O
+                       MOVE -1 TO CUSTNO1L
+                       SET SEND-ERASE TO TRUE
+                       PERFORM 1500-SEND-KEY-MAP
+                   ELSE
+                       MOVE LOW-VALUE TO MNTMAP2O
+                       MOVE CA-CUSTOMER-NUMBER TO CUSTNO2O
+                       EVALUATE TRUE
+                           WHEN PROCESS-ADD-CUSTOMER
+                               MOVE ADD-INSTRUCTION    TO INSTR2O
+                           WHEN PROCESS-CHANGE-CUSTOMER
+                               MOVE CHANGE-INSTRUCTION TO INSTR2O
+                           WHEN PROCESS-DELETE-CUSTOMER
+                               MOVE DELETE-INSTRUCTION TO INSTR2O
+                       END-EVALUATE
+                       MOVE -1 TO LNAMEL
+                       SET SEND-ERASE TO TRUE
+                       PERFORM 1400-SEND-DATA-MAP
+                   END-IF
+      *
+               WHEN EIBAID = DFHPA1 OR DFHPA2 OR DFHPA3
+                   CONTINUE
+      *
+               WHEN EIBAID = DFHENTER
+                   EVALUATE TRUE
+                       WHEN PROCESS-KEY-MAP
+                           PERFORM 1000-PROCESS-KEY-MAP
+                       WHEN PROCESS-ADD-CUSTOMER
+                           PERFORM 2000-PROCESS-ADD-CUSTOMER
+                       WHEN PROCESS-CHANGE-CUSTOMER
+                           PERFORM 3000-PROCESS-CHANGE-CUSTOMER
+                       WHEN PROCESS-DELETE-CUSTOMER
+                           PERFORM 4000-PROCESS-DELETE-CUSTOMER
+                   END-EVALUATE
+      *
+               WHEN OTHER
+                   IF PROCESS-KEY-MAP
+                       MOVE LOW-VALUE TO MNTMAP1O
+                       MOVE 'That key is unassigned.' TO MSG1O
+                       MOVE -1 TO CUSTNO1L
+                       SET SEND-DATAONLY-ALARM TO TRUE
+                       PERFORM 1500-SEND-KEY-MAP
+                   ELSE
+                       MOVE LOW-VALUE TO MNTMAP2O
+                       MOVE 'That key is unassigned.' TO MSG2O
+                       MOVE -1 TO LNAMEL
+                       SET SEND-DATAONLY-ALARM TO TRUE
+                       PERFORM 1400-SEND-DATA-MAP
+                   END-IF
+      *
+           END-EVALUATE.
+           EXEC CICS
+               RETURN TRANSID('MNT2')
+                      COMMAREA(COMMUNICATION-AREA)
+           END-EXEC.
+      *
+       1000-PROCESS-KEY-MAP.
+      *
+           PERFORM 1100-RECEIVE-KEY-MAP.
+           PERFORM 1200-EDIT-KEY-DATA.
+           IF VALID-DATA
+               IF NOT PROCESS-DELETE-CUSTOMER
+                   INSPECT CUSTOMER-MASTER-RECORD
+                       REPLACING ALL SPACE BY '_'
+               END-IF
+               MOVE CUSTNO1I      TO CUSTNO2O
+               MOVE CM-LAST-NAME  TO LNAMEO
+               MOVE CM-FIRST-NAME TO FNAMEO
+               MOVE CM-ADDRESS    TO ADDRO
+               MOVE CM-CITY       TO CITYO
+               MOVE CM-STATE      TO STATEO
+               MOVE CM-ZIP-CODE   TO ZIPCODEO
+               MOVE -1 TO LNAMEL
+               SET SEND-ERASE TO TRUE
+               PERFORM 1400-SEND-DATA-MAP
+           ELSE
+               MOVE LOW-VALUE TO CUSTNO1O
+                                 ACTIONO
+               SET SEND-DATAONLY-ALARM TO TRUE
+               PERFORM 1500-SEND-KEY-MAP
+           END-IF.
+      *
+       1100-RECEIVE-KEY-MAP.
+      *
+           EXEC CICS
+               RECEIVE MAP('MNTMAP1')
+                       MAPSET('MNTSET2')
+                       INTO(MNTMAP1I)
+           END-EXEC.
+      *
+           INSPECT MNTMAP1I
+               REPLACING ALL '_' BY SPACE.
+      *
+       1200-EDIT-KEY-DATA.
+      *
+           MOVE ATTR-NO-HIGHLIGHT TO ACTIONH
+                                     CUSTNO1H.
+      *
+           IF ACTIONI NOT = '1' AND '2' AND '3' AND '4' AND '5'
+               MOVE ATTR-REVERSE TO ACTIONH
+               MOVE -1 TO ACTIONL
+               MOVE 'Action must be 1, 2, or 3.' TO MSG1O
+               MOVE 'N' TO VALID-DATA-SW
+           END-IF.
+      *
+           IF       CUSTNO1L = ZERO
+                 OR CUSTNO1I = SPACE
+               MOVE ATTR-REVERSE TO CUSTNO1H
+               MOVE -1 TO CUSTNO1L
+               MOVE 'You must enter a customer number.' TO MSG1O
+               MOVE 'N' TO VALID-DATA-SW
+           END-IF.
+      *
+           IF VALID-DATA
+               MOVE LOW-VALUE TO MNTMAP2O
+               EVALUATE ACTIONI
+                   WHEN '1'
+                       PERFORM 1300-READ-CUSTOMER-RECORD
+                       IF RESPONSE-CODE = DFHRESP(NOTFND)
+                           MOVE ADD-INSTRUCTION TO INSTR2O
+                           SET PROCESS-ADD-CUSTOMER TO TRUE
+                           MOVE SPACE TO CUSTOMER-MASTER-RECORD
+                       ELSE
+                           IF RESPONSE-CODE = DFHRESP(NORMAL)
+                               MOVE 'That customer already exists.'
+                                    TO MSG1O
+                               MOVE 'N' TO VALID-DATA-SW
+                           END-IF
+                       END-IF
+                   WHEN '2'
+                       PERFORM 1300-READ-CUSTOMER-RECORD
+                       IF RESPONSE-CODE = DFHRESP(NORMAL)
+                           MOVE CUSTOMER-MASTER-RECORD TO
+                               CA-CUSTOMER-RECORD
+                           MOVE CHANGE-INSTRUCTION TO INSTR2O
+                           SET PROCESS-CHANGE-CUSTOMER TO TRUE
+                       ELSE
+                           IF RESPONSE-CODE = DFHRESP(NOTFND)
+                               MOVE 'That customer does not exist.' TO
+                                   MSG1O
+                               MOVE 'N' TO VALID-DATA-SW
+                           END-IF
+                       END-IF
+                   WHEN '3'
+                       PERFORM 1300-READ-CUSTOMER-RECORD
+                       IF RESPONSE-CODE = DFHRESP(NORMAL)
+                           MOVE CUSTOMER-MASTER-RECORD TO
+                               CA-CUSTOMER-RECORD
+                           MOVE DELETE-INSTRUCTION TO INSTR2O
+                           SET PROCESS-DELETE-CUSTOMER TO TRUE
+                           MOVE ATTR-PROT TO LNAMEA
+                                             FNAMEA
+                                             ADDRA
+                                             CITYA
+                                             STATEA
+                                             ZIPCODEA
+                       ELSE
+                           IF RESPONSE-CODE = DFHRESP(NOTFND)
+                               MOVE 'That customer does not exist.' TO
+                                   MSG1O
+                               MOVE 'N' TO VALID-DATA-SW
+                           END-IF
+                       END-IF
+               END-EVALUATE.
+      *
+       1300-READ-CUSTOMER-RECORD.
+      *
+           EXEC CICS
+               READ FILE('CUSTMAS')
+                    INTO(CUSTOMER-MASTER-RECORD)
+                    RIDFLD(CUSTNO1I)
+                    RESP(RESPONSE-CODE)
+           END-EXEC.
+      *
+           IF      RESPONSE-CODE NOT = DFHRESP(NORMAL)
+               AND RESPONSE-CODE NOT = DFHRESP(NOTFND)
+               PERFORM 9999-TERMINATE-PROGRAM
+           END-IF.
+      *
+       1400-SEND-DATA-MAP.
+      *
+           MOVE 'MNT2' TO TRANID2O.
+      *
+           EVALUATE TRUE
+               WHEN SEND-ERASE
+                   EXEC CICS
+                       SEND MAP('MNTMAP2')
+                            MAPSET('MNTSET2')
+                            FROM(MNTMAP2O)
+                            ERASE
+                            CURSOR
+                   END-EXEC
+               WHEN SEND-DATAONLY-ALARM
+                   EXEC CICS
+                       SEND MAP('MNTMAP2')
+                            MAPSET('MNTSET2')
+                            FROM(MNTMAP2O)
+                            DATAONLY
+                            ALARM
+                            CURSOR
+               END-EXEC
+           END-EVALUATE.
+      *
+       1500-SEND-KEY-MAP.
+      *
+           MOVE 'MNT2' TO TRANID1O.
+      *
+           EVALUATE TRUE
+               WHEN SEND-ERASE
+                   EXEC CICS
+                       SEND MAP('MNTMAP1')
+                            MAPSET('MNTSET2')
+                            FROM(MNTMAP1O)
+                            ERASE
+                            CURSOR
+                   END-EXEC
+               WHEN SEND-ERASE-ALARM
+                   EXEC CICS
+                       SEND MAP('MNTMAP1')
+                            MAPSET('MNTSET2')
+                            FROM(MNTMAP1O)
+                            ERASE
+                            ALARM
+                            CURSOR
+                   END-EXEC
+               WHEN SEND-DATAONLY-ALARM
+                   EXEC CICS
+                       SEND MAP('MNTMAP1')
+                            MAPSET('MNTSET2')
+                            FROM(MNTMAP1O)
+                            DATAONLY
+                            ALARM
+                            CURSOR
+                   END-EXEC
+           END-EVALUATE.
+      *
+       2000-PROCESS-ADD-CUSTOMER.
+      *
+           PERFORM 2100-RECEIVE-DATA-MAP.
+           PERFORM 2200-EDIT-CUSTOMER-DATA.
+           IF VALID-DATA
+               PERFORM 2300-WRITE-CUSTOMER-RECORD
+               IF RESPONSE-CODE = DFHRESP(NORMAL)
+                   MOVE 'Customer record added.' TO MSG1O
+                   SET SEND-ERASE TO TRUE
+               ELSE
+                   IF RESPONSE-CODE = DFHRESP(DUPREC)
+                       MOVE 'Another user has added a record with that c
+      -                    'ustomer number.' TO MSG1O
+                       SET SEND-ERASE-ALARM TO TRUE
+                   END-IF
+               END-IF
+               MOVE -1 TO CUSTNO1L
+               PERFORM 1500-SEND-KEY-MAP
+               SET PROCESS-KEY-MAP TO TRUE
+           ELSE
+               MOVE LOW-VALUE TO LNAMEO
+                                 FNAMEO
+                                 ADDRO
+                                 CITYO
+                                 STATEO
+                                 ZIPCODEO
+               SET SEND-DATAONLY-ALARM TO TRUE
+               PERFORM 1400-SEND-DATA-MAP
+           END-IF.
+      *
+       2100-RECEIVE-DATA-MAP.
+      *
+           EXEC CICS
+               RECEIVE MAP('MNTMAP2')
+                       MAPSET('MNTSET2')
+                       INTO(MNTMAP2I)
+           END-EXEC.
+      *
+           INSPECT MNTMAP2I
+               REPLACING ALL '_' BY SPACE.
+      *
+       2200-EDIT-CUSTOMER-DATA.
+      *
+           MOVE ATTR-NO-HIGHLIGHT TO ZIPCODEH
+                                     STATEH
+                                     CITYH
+                                     ADDRH
+                                     FNAMEH
+                                     LNAMEH.
+           IF       ZIPCODEI = SPACE
+                 OR ZIPCODEL = ZERO
+               MOVE ATTR-REVERSE TO ZIPCODEH
+               MOVE -1 TO ZIPCODEL
+               MOVE 'You must enter a zip code.' TO MSG2O
+               MOVE 'N' TO VALID-DATA-SW
+           END-IF.
+           IF       STATEI = SPACE
+                 OR STATEL = ZERO
+               MOVE ATTR-REVERSE TO STATEH
+               MOVE -1 TO STATEL
+               MOVE 'You must enter a state.' TO MSG2O
+               MOVE 'N' TO VALID-DATA-SW
+           END-IF.
+           IF       CITYI = SPACE
+                 OR CITYL = ZERO
+               MOVE ATTR-REVERSE TO CITYH
+               MOVE -1 TO CITYL
+               MOVE 'You must enter a city.' TO MSG2O
+               MOVE 'N' TO VALID-DATA-SW
+           END-IF.
+           IF       ADDRI = SPACE
+                 OR ADDRL = ZERO
+               MOVE ATTR-REVERSE TO ADDRH
+               MOVE -1 TO ADDRL
+               MOVE 'You must enter an address.' TO MSG2O
+               MOVE 'N' TO VALID-DATA-SW
+           END-IF.
+           IF       FNAMEI = SPACE
+                 OR FNAMEL = ZERO
+               MOVE ATTR-REVERSE TO FNAMEH
+               MOVE -1 TO FNAMEL
+               MOVE 'You must enter a first name.' TO MSG2O
+               MOVE 'N' TO VALID-DATA-SW
+           END-IF.
+           IF       LNAMEI = SPACE
+                 OR LNAMEL = ZERO
+               MOVE ATTR-REVERSE TO LNAMEH
+               MOVE -1 TO LNAMEL
+               MOVE 'You must enter a last name.' TO MSG2O
+               MOVE 'N' TO VALID-DATA-SW
+           END-IF.
+      *
+       2300-WRITE-CUSTOMER-RECORD.
+      *
+           MOVE CUSTNO2I TO CM-CUSTOMER-NUMBER.
+           MOVE LNAMEI   TO CM-LAST-NAME.
+           MOVE FNAMEI   TO CM-FIRST-NAME.
+           MOVE ADDRI    TO CM-ADDRESS.
+           MOVE CITYI    TO CM-CITY.
+           MOVE STATEI   TO CM-STATE.
+           MOVE ZIPCODEI TO CM-ZIP-CODE.
+      *
+           EXEC CICS
+               WRITE FILE('CUSTMAS')
+                     FROM(CUSTOMER-MASTER-RECORD)
+                     RIDFLD(CM-CUSTOMER-NUMBER)
+                     RESP(RESPONSE-CODE)
+           END-EXEC.
+      *
+           IF      RESPONSE-CODE NOT = DFHRESP(NORMAL)
+               AND RESPONSE-CODE NOT = DFHRESP(DUPREC)
+               PERFORM 9999-TERMINATE-PROGRAM
+           END-IF.
+      *
+       3000-PROCESS-CHANGE-CUSTOMER.
+      *
+           PERFORM 2100-RECEIVE-DATA-MAP.
+           PERFORM 2200-EDIT-CUSTOMER-DATA.
+           IF VALID-DATA
+               MOVE CUSTNO2I TO CM-CUSTOMER-NUMBER
+               PERFORM 3100-READ-CUSTOMER-FOR-UPDATE
+               IF RESPONSE-CODE = DFHRESP(NORMAL)
+                   IF CUSTOMER-MASTER-RECORD = CA-CUSTOMER-RECORD
+      * Introduce extra nested if as an example of rule violation 
+                       IF VALID-DATA
+                           IF RESPONSE-CODE = DFHRESP(NORMAL)
+                               PERFORM 3200-REWRITE-CUSTOMER-RECORD
+                               MOVE 'Customer record updated.' TO MSG1O
+                               SET SEND-ERASE TO TRUE
+                           END-IF
+                       END-IF
+                   ELSE
+                       MOVE 'Another user has updated the record.  Try a
+      -                     'gain.' TO MSG1O
+                       SET SEND-ERASE-ALARM TO TRUE
+                   END-IF
+               ELSE
+                   IF RESPONSE-CODE = DFHRESP(NOTFND)
+                       MOVE 'Another user has deleted the record.' TO
+                           MSG1O
+                       SET SEND-ERASE-ALARM TO TRUE
+                   END-IF
+               END-IF
+               MOVE -1 TO CUSTNO1L
+               PERFORM 1500-SEND-KEY-MAP
+               SET PROCESS-KEY-MAP TO TRUE
+           ELSE
+               MOVE LOW-VALUE TO LNAMEO
+                                 FNAMEO
+                                 ADDRO
+                                 CITYO
+                                 STATEO
+                                 ZIPCODEO
+               SET SEND-DATAONLY-ALARM TO TRUE
+               PERFORM 1400-SEND-DATA-MAP
+           END-IF.
+      *
+       3100-READ-CUSTOMER-FOR-UPDATE.
+      *
+           EXEC CICS
+               READ FILE('CUSTMAS')
+                    INTO(CUSTOMER-MASTER-RECORD)
+                    RIDFLD(CM-CUSTOMER-NUMBER)
+                    UPDATE
+                    RESP(RESPONSE-CODE)
+           END-EXEC.
+      *
+           IF      RESPONSE-CODE NOT = DFHRESP(NORMAL)
+               AND RESPONSE-CODE NOT = DFHRESP(NOTFND)
+               PERFORM 9999-TERMINATE-PROGRAM
+           END-IF.
+      *
+       3200-REWRITE-CUSTOMER-RECORD.
+      *
+           MOVE LNAMEI   TO CM-LAST-NAME.
+           MOVE FNAMEI   TO CM-FIRST-NAME.
+           MOVE ADDRI    TO CM-ADDRESS.
+           MOVE CITYI    TO CM-CITY.
+           MOVE STATEI   TO CM-STATE.
+           MOVE ZIPCODEI TO CM-ZIP-CODE.
+      *
+           EXEC CICS
+               REWRITE FILE('CUSTMAS')
+                       FROM(CUSTOMER-MASTER-RECORD)
+                       RESP(RESPONSE-CODE)
+           END-EXEC.
+      *
+           IF RESPONSE-CODE NOT = DFHRESP(NORMAL)
+               PERFORM 9999-TERMINATE-PROGRAM
+           END-IF.
+      *
+       4000-PROCESS-DELETE-CUSTOMER.
+      *
+           MOVE CA-CUSTOMER-NUMBER TO CM-CUSTOMER-NUMBER.
+           PERFORM 3100-READ-CUSTOMER-FOR-UPDATE.
+           IF RESPONSE-CODE = DFHRESP(NORMAL)
+               ALTER X TO PROCEED TO Y
+               IF CUSTOMER-MASTER-RECORD = CA-CUSTOMER-RECORD
+                   PERFORM 4100-DELETE-CUSTOMER-RECORD
+                   MOVE 'Customer deleted.' TO MSG1O
+                   SET SEND-ERASE TO TRUE
+               ELSE
+                   MOVE 'Another user has updated the record.  Try again
+      -                 '.' TO MSG1O
+                   SET SEND-ERASE-ALARM TO TRUE
+               END-IF
+           ELSE
+               IF RESPONSE-CODE = DFHRESP(NOTFND)
+                   MOVE 'Another user has deleted the record.' TO
+                       MSG1O
+                   SET SEND-ERASE-ALARM TO TRUE
+               END-IF
+           END-IF.
+           MOVE -1 TO CUSTNO1L.
+           PERFORM 1500-SEND-KEY-MAP.
+           SET PROCESS-KEY-MAP TO TRUE.
+      *
+       4100-DELETE-CUSTOMER-RECORD.
+      * TODO Some comment
+           EXEC CICS
+               DELETE FILE('CUSTMAS')
+                      RESP(RESPONSE-CODE)
+           END-EXEC.
+      *
+           IF  RESPONSE-CODE NOT = DFHRESP(NORMAL)
+               PERFORM 9999-TERMINATE-PROGRAM
+           END-IF.
+      *
+       9999-TERMINATE-PROGRAM.
+      *
+           MOVE EIBRESP  TO ERR-RESP.
+           MOVE EIBRESP2 TO ERR-RESP2.
+           MOVE EIBTRNID TO ERR-TRNID.
+           MOVE EIBRSRCE TO ERR-RSRCE.
+      *
+           EXEC CICS
+               XCTL PROGRAM('SYSERR')
+                    COMMAREA(ERROR-PARAMETERS)
+           END-EXEC.
+IDENTIFICATION DIVISION.
+PROGRAM-ID. BUBBLE-SORT.
+AUTHOR. ASLANYAN.
+
+ENVIRONMENT DIVISION.
+
+DATA DIVISION.
+LOCAL-STORAGE SECTION.
+01 VECTOR.
+  05 ARR_SIZE PIC 9(2) VALUE 0.
+  05 ARRAY pic s999 occurs 1 to 100 times depending on arr_size value 0.
+01 i usage index.
+01 tmp pic 99 value 0.
+01 was_swapped PIC 9 value 1.
+01 tmp_swap PIC s999 value 0.
+
+PROCEDURE DIVISION.
+
+  display "Size: " WITH NO ADVANCING.
+  accept arr_size from console.
+
+  perform varying i from 1 by 1 until i > arr_size
+    accept array(i) from console
+  end-perform.
+
+  move 1 to was_swapped.
+
+  perform until was_swapped NOT= 1
+    move 0 to was_swapped
+    perform varying i from 2 by 1 until i > arr_size
+      SUBTRACT 1 FROM i GIVING tmp
+      if array(tmp) > array(i)
+        move 1 to was_swapped
+        
+      compute tmp_swap=array(i)
+      compute array(i)=array(tmp)
+      compute array(tmp)=tmp_swap
+
+      end-if
+    end-perform
+  end-perform.
+
+  display "New array: " with no advancing.
+  perform varying i from 1 by 1 until i > arr_size
+    display array(i) " " with no advancing
+  end-perform.
+
+END PROGRAM BUBBLE-SORT.
+identification division.
+program-id. line_seq_file.
+author. hamlet.
+
+environment division.
+input-output section.
+file-control.
+  SELECT in_file assign to "input.txt" organization line sequential file status is file_status.
+  SELECT out_file assign to "output.txt" organization line sequential file
+  status is out_file_status.
+
+data division.
+file section.
+FD in_file.
+
+01 file_record.
+  05 iname pic X(10).
+  05 iage  pic 9(3).
+
+FD out_file.
+01 ofile_record.
+  05 name pic X(10).
+  05 age pic X(3).
+  05 empty_space pic X(2) value " ".
+  05 level pic 9.
+
+local-storage section.
+01 file_status PIC 99 value 0.
+01 out_file_status PIC 99 value 0.
+
+01 tmp_record.
+  05 rname pic X(10).
+  05 rage pic X(3).
+  05 e_space pic X(2) value " ".
+  05 rlevel pic 9.
+  
+
+PROCEDURE DIVISION.
+01-MAIN.
+  open INPUT in_file
+  open OUTPUT out_file
+  display "file_status = " file_status
+  PERFORM 02-READ UNTIL file_status = 1
+  CLOSE in_file
+  CLOSE out_file
+  .
+
+02-READ.
+  READ in_file
+    AT END move 1 to file_status
+    NOT AT END display "file_rec = " file_record
+    display iname "->" iage
+    move iname to rname
+    move iage to rage
+    move 1 to rlevel
+    write ofile_record from tmp_record
+  END-READ
+  .
+END Program line_seq_file.
+IDENTIFICATION DIVISION.
+Program-ID. is_even.
+Author. grimmjoe.
+
+ENVIRONMENT DIVISION.
+
+DATA DIVISION.
+Local-Storage Section.
+01 a PIC 9(4) value 0.
+01 d PIC 9(4) value 0.
+01 r PIC 9(4) value 0.
+
+PROCEDURE DIVISION.
+  DISPLAY "Enter a: " WITH NO ADVANCING.
+  ACCEPT a FROM CONSOLE.
+
+  DIVIDE a BY 2 GIVING d REMAINDER r.
+
+  display "D = " d ", r = " r.
+
+  if r = 0
+    display "Even"
+  else
+    display "Odd"
+  end-if.
+
+END PROGRAM is_even.
+identification division.
+program-id. line_seq_file.
+author. hamlet.
+
+environment division.
+input-output section.
+file-control.
+  SELECT in_file assign to "input.txt" organization line sequential file status is file_status.
+  SELECT out_file assign to "output.txt" organization line sequential file
+  status is out_file_status.
+
+data division.
+file section.
+FD in_file.
+
+01 file_record.
+  05 str pic X(10).
+
+FD out_file.
+01 ofile_record.
+  05 ostr pic X(10).
+
+local-storage section.
+01 file_status PIC 99 value 0.
+01 out_file_status PIC 99 value 0.
+
+PROCEDURE DIVISION.
+01-MAIN.
+  open INPUT in_file
+  open OUTPUT out_file
+  display "file_status = " file_status
+  PERFORM 02-READ UNTIL file_status = 1
+  CLOSE in_file
+  MOVE "some str" to file_record
+  WRITE ofile_record from file_record
+  CLOSE out_file
+  .
+
+02-READ.
+  READ in_file
+    AT END move 1 to file_status
+    NOT AT END display "file_rec = " file_record
+        WRITE ofile_record from file_record
+  END-READ
+  .
+END Program line_seq_file.
+identification division.
+program-id. var-array.
+
+environment division.
+
+data division.
+local-storage section.
+01 i usage index.
+01 vector.
+  05 arr_size pic 99.
+  05 array occurs 1 to 10 times depending on arr_size pic X value "H".
+
+procedure division.
+  display "start".
+
+  MOVE 8 TO arr_size.
+  PERFORM VARYING i FROM 1 BY 1 UNTIL i > arr_size
+    display "array(" i ") = " array(i) 
+  END-PERFORM.
+end program var-array.
+IDENTIFICATION DIVISION.
+Program-ID. table_index.
+Author. grimmjoe.
+
+ENVIRONMENT DIVISION.
+
+DATA DIVISION.
+Local-Storage Section.
+01 index_b USAGE IS INDEX.
+01 sample_array.
+  05 array_element PIC 9(4)
+      OCCURS 3 INDEXED BY index_a VALUE 0.
+
+PROCEDURE DIVISION.
+  SET index_a TO 3.
+  SET index_b TO index_a.
+  PERFORM VARYING index_a FROM 1 BY 1 UNTIL index_a > index_b
+    DISPLAY array_element(index_a)
+  END-PERFORM.
+
+  PERFORM VARYING index_b FROM 1 BY 1 UNTIL index_b > 3
+    DISPLAY array_element(index_b)
+  END-PERFORM.
+
+  MOVE 4 TO array_element(1).
+  MOVE 32 TO array_element(2).
+  MOVE 128 TO array_element(3).
+
+  MOVE 11 TO array_element(1) (1:2).
+
+  PERFORM VARYING index_a FROM 1 BY 1 UNTIL index_a > 3
+    DISPLAY array_element(index_a)
+  END-PERFORM.
+END PROGRAM table_index.
+IDENTIFICATION DIVISION.
+Program-ID. table01.
+Author. grimmjoe.
+
+ENVIRONMENT DIVISION.
+
+DATA DIVISION.
+Local-Storage Section.
+01 sample_array.
+  05 array_element OCCURS 3 TIMES.
+    10 str pic X(10).
+  10 int_part pic 9(4).
+
+01 i pic 9 value 0.
+
+PROCEDURE DIVISION.
+  DISPLAY "1: " array_element(1).
+  DISPLAY "2: " array_element(2).
+  DISPLAY "3: " array_element(3).
+
+  MOVE 4 TO array_element(1).
+  MOVE 32 TO array_element(2).
+  MOVE 128 TO array_element(3).
+
+  MOVE 11 TO array_element(1) (1:2).
+
+  MOVE "Hamlet" to array_element(2).
+  move 1234 to array_element(3) (11:4).
+
+  DISPLAY "1: " array_element(1).
+  DISPLAY "2: " array_element(2).
+  DISPLAY "3: " array_element(3).
+
+  perform varying i from 1 by 1 until i > 3
+    accept str(i)
+  accept int_part(i)
+  end-perform.
+
+  perform varying i from 1 by 1 until i > 3
+    display str(i) "->" int_part(i)
+  end-perform.
+
+END PROGRAM table01.
+IDENTIFICATION DIVISION.
+Program-ID. table01.
+Author. grimmjoe.
+
+ENVIRONMENT DIVISION.
+
+DATA DIVISION.
+Local-Storage Section.
+01 sample_array.
+  05 array_element PIC 9(4)
+      OCCURS 3 TIMES VALUE 0.
+
+PROCEDURE DIVISION.
+  DISPLAY "1: " array_element(1).
+  DISPLAY "2: " array_element(2).
+  DISPLAY "3: " array_element(3).
+
+  MOVE 4 TO array_element(1).
+  MOVE 32 TO array_element(2).
+  MOVE 128 TO array_element(3).
+
+  MOVE 11 TO array_element(1) (1:2).
+
+  DISPLAY "1: " array_element(1).
+  DISPLAY "2: " array_element(2).
+  DISPLAY "3: " array_element(3).
+END PROGRAM table01.
+IDENTIFICATION DIVISION.
+Program-ID. is_triangle.
+Author. grimmjoe.
+
+ENVIRONMENT DIVISION.
+
+DATA DIVISION.
+Local-Storage Section.
+01 a PIC 9999v9(20) value 0.
+01 b PIC 9999v9(20) value 0.
+01 c PIC 9999v9(20) value 0.
+
+PROCEDURE DIVISION.
+  DISPLAY "Enter a: " WITH NO ADVANCING.
+  ACCEPT a FROM CONSOLE.
+
+  DISPLAY "Enter b: " WITH NO ADVANCING.
+  ACCEPT b FROM CONSOLE.
+
+  DISPLAY "Enter c: " WITH NO ADVANCING.
+  ACCEPT c FROM CONSOLE.
+
+  IF a<(b+c) AND b<(a+c) AND c<(a+b)
+    DISPLAY "GOOD TRIANGLE."
+  ELSE
+    DISPLAY "NOT A TRIANGLE."
+  END-IF.
+END PROGRAM is_triangle.
